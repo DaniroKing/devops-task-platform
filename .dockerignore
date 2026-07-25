@@ -1,0 +1,29 @@
+# Git
+.git
+.github
+
+# Python
+.venv
+venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets and environment
+.env
+.env.*
+!.env.example
+
+# Development files
+tests/
+docs/
+scripts/
+requirements-dev.txt
+
+# Documentation and logs
+README.md
+*.log
