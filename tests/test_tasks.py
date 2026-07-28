@@ -1,29 +1,10 @@
-from collections.abc import Generator
+from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 
-import app.main as main_module
-from app.main import app
 
-
-client = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def reset_task_storage() -> Generator[None, None, None]:
-    """Очищает временное хранилище до и после каждого теста."""
-    main_module.tasks.clear()
-    main_module.next_task_id = 1
-
-    yield
-
-    main_module.tasks.clear()
-    main_module.next_task_id = 1
-
-
-def create_test_task() -> dict[str, object]:
-    """Создаёт задачу, используемую в других тестах."""
+def create_test_task(client: TestClient) -> dict[str, Any]:
+    """Создаёт задачу для последующих тестов."""
     response = client.post(
         "/tasks",
         json={
@@ -33,10 +14,11 @@ def create_test_task() -> dict[str, object]:
     )
 
     assert response.status_code == 201
+
     return response.json()
 
 
-def test_create_task() -> None:
+def test_create_task(client: TestClient) -> None:
     response = client.post(
         "/tasks",
         json={
@@ -57,8 +39,8 @@ def test_create_task() -> None:
     assert "updated_at" in task
 
 
-def test_get_tasks() -> None:
-    created_task = create_test_task()
+def test_get_tasks(client: TestClient) -> None:
+    created_task = create_test_task(client)
 
     response = client.get("/tasks")
 
@@ -66,8 +48,8 @@ def test_get_tasks() -> None:
     assert response.json() == [created_task]
 
 
-def test_get_task_by_id() -> None:
-    created_task = create_test_task()
+def test_get_task_by_id(client: TestClient) -> None:
+    created_task = create_test_task(client)
 
     response = client.get("/tasks/1")
 
@@ -75,8 +57,8 @@ def test_get_task_by_id() -> None:
     assert response.json() == created_task
 
 
-def test_update_task() -> None:
-    create_test_task()
+def test_update_task(client: TestClient) -> None:
+    create_test_task(client)
 
     response = client.patch(
         "/tasks/1",
@@ -94,8 +76,8 @@ def test_update_task() -> None:
     assert updated_task["status"] == "done"
 
 
-def test_delete_task() -> None:
-    create_test_task()
+def test_delete_task(client: TestClient) -> None:
+    create_test_task(client)
 
     delete_response = client.delete("/tasks/1")
 
@@ -110,7 +92,7 @@ def test_delete_task() -> None:
     }
 
 
-def test_get_missing_task() -> None:
+def test_get_missing_task(client: TestClient) -> None:
     response = client.get("/tasks/999")
 
     assert response.status_code == 404
@@ -119,7 +101,7 @@ def test_get_missing_task() -> None:
     }
 
 
-def test_reject_empty_title() -> None:
+def test_reject_empty_title(client: TestClient) -> None:
     response = client.post(
         "/tasks",
         json={
