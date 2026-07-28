@@ -1,31 +1,38 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Response, status
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
-from app.schemas import (
-    TaskCreate,
-    TaskResponse,
-    TaskStatus,
-    TaskUpdate,
-)
+from app.database import Base, engine, get_db
+from app.models import Task
+from app.schemas import TaskCreate, TaskResponse, TaskUpdate
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
+    """Создаёт отсутствующие таблицы при запуске приложения."""
+    Base.metadata.create_all(bind=engine)
+    yield
 
 
 app = FastAPI(
     title="DevOps Task Platform",
     description="Учебное API для практики DevOps",
-    version="0.2.0",
+    version="0.3.0",
+    lifespan=lifespan,
 )
 
 
-# Временное хранилище в оперативной памяти.
-# После перезапуска приложения данные будут потеряны.
-tasks: dict[int, TaskResponse] = {}
-next_task_id = 1
+DatabaseSession = Annotated[Session, Depends(get_db)]
 
 
-def get_task_or_404(task_id: int) -> TaskResponse:
-    """Возвращает задачу или прерывает запрос с ошибкой 404."""
-    task = tasks.get(task_id)
+def get_task_or_404(task_id: int, db: Session) -> Task:
+    """Возвращает задачу или завершает запрос ошибкой 404."""
+    task = db.get(Task, task_id)
 
     if task is None:
         raise HTTPException(
@@ -46,23 +53,27 @@ def read_root() -> dict[str, str]:
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
-    """Проверяет, что приложение запущено и отвечает."""
+def health_check(db: DatabaseSession) -> dict[str, str]:
+    """Проверяет доступность приложения и базы данных."""
+    db.execute(text("SELECT 1"))
+
     return {
         "status": "healthy",
     }
 
 
 @app.get("/tasks", response_model=list[TaskResponse])
-def get_tasks() -> list[TaskResponse]:
+def get_tasks(db: DatabaseSession) -> list[Task]:
     """Возвращает список всех задач."""
-    return list(tasks.values())
+    statement = select(Task).order_by(Task.id)
+
+    return list(db.scalars(statement).all())
 
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
-def get_task(task_id: int) -> TaskResponse:
-    """Возвращает одну задачу по идентификатору."""
-    return get_task_or_404(task_id)
+def get_task(task_id: int, db: DatabaseSession) -> Task:
+    """Возвращает задачу по идентификатору."""
+    return get_task_or_404(task_id, db)
 
 
 @app.post(
@@ -70,23 +81,19 @@ def get_task(task_id: int) -> TaskResponse:
     response_model=TaskResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_task(task_data: TaskCreate) -> TaskResponse:
+def create_task(
+    task_data: TaskCreate,
+    db: DatabaseSession,
+) -> Task:
     """Создаёт новую задачу."""
-    global next_task_id
-
-    current_time = datetime.now(timezone.utc)
-
-    task = TaskResponse(
-        id=next_task_id,
+    task = Task(
         title=task_data.title,
         description=task_data.description,
-        status=TaskStatus.TODO,
-        created_at=current_time,
-        updated_at=current_time,
     )
 
-    tasks[task.id] = task
-    next_task_id += 1
+    db.add(task)
+    db.commit()
+    db.refresh(task)
 
     return task
 
@@ -95,26 +102,32 @@ def create_task(task_data: TaskCreate) -> TaskResponse:
 def update_task(
     task_id: int,
     task_data: TaskUpdate,
-) -> TaskResponse:
+    db: DatabaseSession,
+) -> Task:
     """Частично обновляет существующую задачу."""
-    stored_task = get_task_or_404(task_id)
-
+    task = get_task_or_404(task_id, db)
     update_data = task_data.model_dump(exclude_unset=True)
-    update_data["updated_at"] = datetime.now(timezone.utc)
 
-    updated_task = stored_task.model_copy(update=update_data)
-    tasks[task_id] = updated_task
+    for field, value in update_data.items():
+        setattr(task, field, value)
 
-    return updated_task
+    task.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(task)
+
+    return task
 
 
 @app.delete(
     "/tasks/{task_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_task(task_id: int) -> Response:
+def delete_task(task_id: int, db: DatabaseSession) -> Response:
     """Удаляет задачу."""
-    get_task_or_404(task_id)
-    del tasks[task_id]
+    task = get_task_or_404(task_id, db)
+
+    db.delete(task)
+    db.commit()
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

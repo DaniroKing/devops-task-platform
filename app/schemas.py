@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TaskStatus(str, Enum):
@@ -29,6 +29,8 @@ class TaskUpdate(BaseModel):
 
 class TaskResponse(BaseModel):
     """Полное представление задачи в ответе API."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     title: str
